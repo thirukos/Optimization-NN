@@ -94,7 +94,7 @@ class NelderMeadHyperModel:
         )
         optimizer = keras.optimizers.Adam(
             learning_rate=learning_rate,
-            beta_1=0.9,  # Fixed values for beta1 and beta2, since they are not optimized in this example
+            beta_1=0.9,  # Fixed values for beta1 and beta2
             beta_2=0.999,
             epsilon=1e-7,
         )
@@ -114,51 +114,34 @@ class TunerWrapper:
         self.x_test = x_test
         self.y_test = y_test
 
-
-    def grid_search(self, hypermodel):
+    def grid_search(self, hypermodel, dir, pname):
         tuner = GridSearch(
             hypermodel,
             objective=Objective("val_loss", direction="min"),
             max_trials=30,
             executions_per_trial=3,
-            directory="grid_search_results_fulldata2",
-            project_name="mnist_grid_search_fulldata_tuning2",
+            directory=dir,
+            project_name=pname,
             seed=42,
         )
-        return self._run_tuning(tuner)
+        return self._run_keras_tuner(tuner)
 
-    def random_search(self, hypermodel):
+    def random_search(self, hypermodel, dir, pname):
         tuner = RandomSearch(
             hypermodel,
             objective=Objective("val_loss", direction="min"),
             max_trials=30,
             executions_per_trial=3,
-            directory="random_search_results_fulldata2",
-            project_name="mnist_random_search_fulldata_tuning2",
+            directory=dir,
+            project_name=pname,
             seed=42,
         )
-        return self._run_tuning(tuner)
-    
+        return self._run_keras_tuner(tuner)
+
     def nelder_mead_search(self, hypermodel):
-        def objective_function(params):
-            model = hypermodel.build(params)
-            history = model.fit(
-                self.x_train,
-                self.y_train,
-                batch_size=int(params[2]),
-                epochs=5,
-                validation_split=0.1,
-                verbose=0,
-            )
-            val_loss = history.history["val_loss"][-1]
-            return val_loss
+        return self._run_nelder_mead(hypermodel)
 
-        x0 = np.array([0.1, 1e-3, 32])  # Replace with appropriate initial values
-
-        result = minimize(objective_function, x0, method="Nelder-Mead")
-        return result
-    
-    def _run_tuning(self, tuner):
+    def _run_keras_tuner(self, tuner):
         tuner.search_space_summary()
         tuner.search(
             self.x_train,
@@ -186,6 +169,40 @@ class TunerWrapper:
         print("Test loss:", test_loss)
         print("Test accuracy:", test_accuracy)
 
+        return best_model, history
+
+    def _run_nelder_mead(self, hypermodel):
+        def objective_function(params):
+            model = hypermodel.build(params)
+            history = model.fit(
+                self.x_train,
+                self.y_train,
+                batch_size=int(params[2]),
+                epochs=5,
+                validation_split=0.1,
+                verbose=0,
+            )
+            val_loss = history.history["val_loss"][-1]
+            return val_loss
+
+        x0 = np.array([0.1, 1e-3, 32])  # Replace with appropriate initial values
+
+        result = minimize(objective_function, x0, method="Nelder-Mead")
+
+        best_params = result.x
+        best_model = hypermodel.build(best_params)
+        best_batch_size = int(best_params[2])
+        history = best_model.fit(
+            self.x_train,
+            self.y_train,
+            batch_size=best_batch_size,
+            epochs=5,
+            validation_split=0.1,
+        )
+
+        test_loss, test_accuracy = best_model.evaluate(self.x_test, self.y_test)
+        print("Test loss:", test_loss)
+        print("Test accuracy:", test_accuracy)
         return best_model, history
 
 class PlotResults:
