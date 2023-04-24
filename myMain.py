@@ -13,7 +13,7 @@ class DataLoader:
         self.n = n
 
     def load_data(self):
-        (x_train, y_train), (x_test, y_test) = mnist.load_data()
+        (x_train, y_train), (x_test, y_test) = mnist.load_data() # training data size 60000, test data size 10000
         x_train = x_train[:self.n]
         y_train = y_train[:self.n]
 
@@ -169,7 +169,7 @@ class TunerWrapper:
         print("Test loss:", test_loss)
         print("Test accuracy:", test_accuracy)
 
-        return best_model, history
+        return best_model, history, best_hp
 
     def _run_nelder_mead(self, hypermodel):
         def objective_function(params):
@@ -203,7 +203,7 @@ class TunerWrapper:
         test_loss, test_accuracy = best_model.evaluate(self.x_test, self.y_test)
         print("Test loss:", test_loss)
         print("Test accuracy:", test_accuracy)
-        return best_model, history
+        return best_model, history, best_params
 
 class PlotResults:
     def __init__(self, results):
@@ -232,5 +232,3 @@ class PlotResults:
         plt.legend()
         plt.title("Accuracy vs. Epochs")
         plt.show()
-
-
