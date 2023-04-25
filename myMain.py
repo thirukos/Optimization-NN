@@ -77,8 +77,21 @@ class NelderMeadHyperModel:
 
     def build(self, params):
         # Map the input params array to the corresponding hyperparameters
-        dropout_rate, learning_rate, batch_size = params
+        learning_rate, optimizer, dropout_rate, batch_size, beta1, beta2, momentum = params
         batch_size = int(batch_size)
+
+        if optimizer < 0.5:
+            optimizer = keras.optimizers.Adam(
+                learning_rate=learning_rate,
+                beta_1=beta1,
+                beta_2=beta2,
+                epsilon=1e-7,
+            )
+        else:
+            optimizer = keras.optimizers.SGD(
+                learning_rate=learning_rate,
+                momentum=momentum,
+            )
 
         model = keras.Sequential(
             [
@@ -92,13 +105,6 @@ class NelderMeadHyperModel:
                 layers.Dense(self.num_classes, activation="softmax"),
             ]
         )
-        optimizer = keras.optimizers.Adam(
-            learning_rate=learning_rate,
-            beta_1=0.9,  # Fixed values for beta1 and beta2
-            beta_2=0.999,
-            epsilon=1e-7,
-        )
-
         model.compile(
             optimizer=optimizer,
             loss="categorical_crossentropy",
@@ -120,7 +126,7 @@ class TunerWrapper:
         tuner = GridSearch(
             hypermodel,
             objective=Objective("val_loss", direction="min"),
-            max_trials=30,
+            max_trials=50,
             executions_per_trial=3,
             directory=dir,
             project_name=pname,
@@ -132,7 +138,7 @@ class TunerWrapper:
         tuner = RandomSearch(
             hypermodel,
             objective=Objective("val_loss", direction="min"),
-            max_trials=30,
+            max_trials=50,
             executions_per_trial=3,
             directory=dir,
             project_name=pname,
@@ -170,11 +176,15 @@ class TunerWrapper:
         test_loss, test_accuracy = best_model.evaluate(self.x_test, self.y_test)
         print("Test loss:", test_loss)
         print("Test accuracy:", test_accuracy)
+        train_losses = []
+        train_accuracies = []
         val_losses = []
         val_accuracies = []
         test_losses = []
         test_accuracies = []
         for trial in tuner.oracle.get_best_trials(num_trials=30):
+            train_losses.append(trial.metrics.get_best_value("loss"))
+            train_accuracies.append(trial.metrics.get_best_value("accuracy"))
             val_losses.append(trial.metrics.get_best_value("val_loss"))
             val_accuracies.append(trial.metrics.get_best_value("val_accuracy"))
 
@@ -184,9 +194,11 @@ class TunerWrapper:
             test_losses.append(trial_test_loss)
             test_accuracies.append(trial_test_accuracy)
 
-        return best_model, {"val_loss": val_losses, "val_accuracy": val_accuracies, "test_loss": test_losses, "test_accuracy": test_accuracies}, best_hp
+        return best_model,history, {"loss": train_losses, "accuracy": train_accuracies, "val_loss": val_losses, "val_accuracy": val_accuracies, "test_loss": test_losses, "test_accuracy": test_accuracies}, best_hp
 
     def _run_nelder_mead(self, hypermodel):
+        train_losses = []
+        train_accuracies = []
         val_losses = []
         val_accuracies = []
         test_losses = []
@@ -201,18 +213,33 @@ class TunerWrapper:
                 validation_split=0.1,
                 verbose=0,
             )
+            train_loss = history.history["loss"][-1]
+            train_accuracy = history.history["accuracy"][-1]
             val_loss = history.history["val_loss"][-1]
             val_accuracy = history.history["val_accuracy"][-1]
             test_loss, test_accuracy = model.evaluate(self.x_test, self.y_test, verbose=0)
+            train_losses.append(train_loss)
+            train_accuracies.append(train_accuracy)
             val_losses.append(val_loss)
             val_accuracies.append(val_accuracy)
             test_losses.append(test_loss)
             test_accuracies.append(test_accuracy)
             return val_loss
 
-        x0 = np.array([0.1, 1e-3, 32])  # Replace with appropriate initial values
+        # x0 = np.array([0.1, 1e-3, 32])
+        x0 = np.array([1e-3, 0.5, 0.1, 32, 0.9, 0.999, 0.9])
+        bounds = [
+                (1e-4, 1e-1),  # learning_rate
+                (0, 1),  # optimizer (continuous)
+                (0.1, 0.5),  # dropout_rate
+                (0, 1),  # batch_size (continuous)
+                (0.5, 0.999),  # beta1
+                (0.5, 0.999),  # beta2
+                (0, 0.99),  # momentum
+            ]
 
-        result = minimize(objective_function, x0, method="Nelder-Mead", options={"maxiter": 30})
+        # result = minimize(objective_function, x0, method="Nelder-Mead", options={"maxiter": 50})
+        result = minimize(objective_function, x0, method="L-BFGS-B", bounds=bounds, options={"maxiter": 50})
 
         best_params = result.x
         best_model = hypermodel.build(best_params)
@@ -228,7 +255,7 @@ class TunerWrapper:
         test_loss, test_accuracy = best_model.evaluate(self.x_test, self.y_test)
         print("Test loss:", test_loss)
         print("Test accuracy:", test_accuracy)
-        return best_model, {"val_loss": val_losses, "val_accuracy": val_accuracies, "test_loss": test_losses, "test_accuracy": test_accuracies}, best_params
+        return best_model, history, {"loss": train_losses, "accuracy": train_accuracies, "val_loss": val_losses, "val_accuracy": val_accuracies, "test_loss": test_losses, "test_accuracy": test_accuracies}, best_params
 
 # class PlotResults:
 #     def __init__(self, results):
@@ -259,16 +286,15 @@ class TunerWrapper:
 #         plt.show()
 
 class PlotResults:
-    def __init__(self, results):
+    def __init__(self, results, results_trail):
         self.results = results
+        self.results_trail = results_trail
 
     def plot_loss_epoch(self):
         plt.figure(figsize=(10, 5))
         for algorithm, histories in self.results.items():
-            for i, result in enumerate(histories):
-                if i == 0:
-                    plt.plot(result["history"]["loss"], label=f"{algorithm} Training loss")
-                    plt.plot(result["history"]["val_loss"], label=f"{algorithm} Validation loss")
+            plt.plot(histories["loss"], label=f"{algorithm} Training loss")
+            plt.plot(histories["val_loss"], label=f"{algorithm} Validation loss")
         plt.xlabel("Epochs")
         plt.ylabel("Loss")
         plt.legend()
@@ -278,10 +304,8 @@ class PlotResults:
     def plot_accuracy_epoch(self):
         plt.figure(figsize=(10, 5))
         for algorithm, histories in self.results.items():
-            for i, result in enumerate(histories):
-                if i == 0:
-                    plt.plot(result["history"]["accuracy"], label=f"{algorithm} Training accuracy")
-                    plt.plot(result["history"]["val_accuracy"], label=f"{algorithm} Validation accuracy")
+            plt.plot(histories["accuracy"], label=f"{algorithm} Training accuracy")
+            plt.plot(histories["val_accuracy"], label=f"{algorithm} Validation accuracy")
         plt.xlabel("Epochs")
         plt.ylabel("Accuracy")
         plt.legend()
@@ -290,13 +314,11 @@ class PlotResults:
 
     def plot_loss_trials(self):
         plt.figure(figsize=(10, 5))
-        for algorithm, histories in self.results.items():
-            training_losses = [result["history"]["loss"][-1] for result in histories]
-            validation_losses = [result["history"]["val_loss"][-1] for result in histories]
-            test_losses = [result["test_loss"] for result in histories]
-            plt.plot(training_losses, label=f"{algorithm} Training loss")
-            plt.plot(validation_losses, label=f"{algorithm} Validation loss")
-            plt.plot(test_losses, label=f"{algorithm} Test loss")
+        for algorithm, histories in self.results_trail.items():
+            plt.plot(histories["loss"], label=f"{algorithm} Training loss")
+            plt.plot(histories["val_loss"], label=f"{algorithm} Validation loss")
+            plt.plot(histories["test_loss"], label=f"{algorithm} Test loss")
+            
         plt.xlabel("Trials")
         plt.ylabel("Loss")
         plt.legend()
@@ -305,13 +327,11 @@ class PlotResults:
 
     def plot_accuracy_trials(self):
         plt.figure(figsize=(10, 5))
-        for algorithm, histories in self.results.items():
-            training_accuracies = [result["history"]["accuracy"][-1] for result in histories]
-            validation_accuracies = [result["history"]["val_accuracy"][-1] for result in histories]
-            test_accuracies = [result["test_accuracy"] for result in histories]
-            plt.plot(training_accuracies, label=f"{algorithm} Training accuracy")
-            plt.plot(validation_accuracies, label=f"{algorithm} Validation accuracy")
-            plt.plot(test_accuracies, label=f"{algorithm} Test accuracy")
+        for algorithm, histories in self.results_trail.items():
+            plt.plot(histories["accuracy"], label=f"{algorithm} Training accuracy")
+            plt.plot(histories["val_accuracy"], label=f"{algorithm} Validation accuracy")
+            plt.plot(histories["test_accuracy"], label=f"{algorithm} Test accuracy")
+            
         plt.xlabel("Trials")
         plt.ylabel("Accuracy")
         plt.legend()
