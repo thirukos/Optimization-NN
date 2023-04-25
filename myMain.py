@@ -170,10 +170,27 @@ class TunerWrapper:
         test_loss, test_accuracy = best_model.evaluate(self.x_test, self.y_test)
         print("Test loss:", test_loss)
         print("Test accuracy:", test_accuracy)
+        val_losses = []
+        val_accuracies = []
+        test_losses = []
+        test_accuracies = []
+        for trial in tuner.oracle.get_best_trials(num_trials=30):
+            val_losses.append(trial.metrics.get_best_value("val_loss"))
+            val_accuracies.append(trial.metrics.get_best_value("val_accuracy"))
 
-        return best_model, history, best_hp
+            # Rebuild and evaluate the model for the test set
+            trial_model = tuner.hypermodel.build(trial.hyperparameters)
+            trial_test_loss, trial_test_accuracy = trial_model.evaluate(self.x_test, self.y_test, verbose=0)
+            test_losses.append(trial_test_loss)
+            test_accuracies.append(trial_test_accuracy)
+
+        return best_model, {"val_loss": val_losses, "val_accuracy": val_accuracies, "test_loss": test_losses, "test_accuracy": test_accuracies}, best_hp
 
     def _run_nelder_mead(self, hypermodel):
+        val_losses = []
+        val_accuracies = []
+        test_losses = []
+        test_accuracies = []
         def objective_function(params):
             model = hypermodel.build(params)
             history = model.fit(
@@ -185,11 +202,17 @@ class TunerWrapper:
                 verbose=0,
             )
             val_loss = history.history["val_loss"][-1]
+            val_accuracy = history.history["val_accuracy"][-1]
+            test_loss, test_accuracy = model.evaluate(self.x_test, self.y_test, verbose=0)
+            val_losses.append(val_loss)
+            val_accuracies.append(val_accuracy)
+            test_losses.append(test_loss)
+            test_accuracies.append(test_accuracy)
             return val_loss
 
         x0 = np.array([0.1, 1e-3, 32])  # Replace with appropriate initial values
 
-        result = minimize(objective_function, x0, method="Nelder-Mead")
+        result = minimize(objective_function, x0, method="Nelder-Mead", options={"maxiter": 30})
 
         best_params = result.x
         best_model = hypermodel.build(best_params)
@@ -205,32 +228,92 @@ class TunerWrapper:
         test_loss, test_accuracy = best_model.evaluate(self.x_test, self.y_test)
         print("Test loss:", test_loss)
         print("Test accuracy:", test_accuracy)
-        return best_model, history, best_params
+        return best_model, {"val_loss": val_losses, "val_accuracy": val_accuracies, "test_loss": test_losses, "test_accuracy": test_accuracies}, best_params
+
+# class PlotResults:
+#     def __init__(self, results):
+#         self.results = results
+
+#     def plot_loss(self):
+#         plt.figure(figsize=(10, 5))
+#         for algorithm, history in self.results.items():
+#             plt.plot(history["loss"], label=f"{algorithm} Training loss")
+#             plt.plot(history["val_loss"], label=f"{algorithm} Validation loss")
+        
+#         plt.xlabel("Epochs")
+#         plt.ylabel("Loss")
+#         plt.legend()
+#         plt.title("Loss vs. Epochs")
+#         plt.show()
+
+#     def plot_accuracy(self):
+#         plt.figure(figsize=(10, 5))
+#         for algorithm, history in self.results.items():
+#             plt.plot(history["accuracy"], label=f"{algorithm} Training accuracy")
+#             plt.plot(history["val_accuracy"], label=f"{algorithm} Validation accuracy")
+        
+#         plt.xlabel("Epochs")
+#         plt.ylabel("Accuracy")
+#         plt.legend()
+#         plt.title("Accuracy vs. Epochs")
+#         plt.show()
 
 class PlotResults:
     def __init__(self, results):
         self.results = results
 
-    def plot_loss(self):
+    def plot_loss_epoch(self):
         plt.figure(figsize=(10, 5))
-        for algorithm, history in self.results.items():
-            plt.plot(history["loss"], label=f"{algorithm} Training loss")
-            plt.plot(history["val_loss"], label=f"{algorithm} Validation loss")
-        
+        for algorithm, histories in self.results.items():
+            for i, result in enumerate(histories):
+                if i == 0:
+                    plt.plot(result["history"]["loss"], label=f"{algorithm} Training loss")
+                    plt.plot(result["history"]["val_loss"], label=f"{algorithm} Validation loss")
         plt.xlabel("Epochs")
         plt.ylabel("Loss")
         plt.legend()
         plt.title("Loss vs. Epochs")
         plt.show()
 
-    def plot_accuracy(self):
+    def plot_accuracy_epoch(self):
         plt.figure(figsize=(10, 5))
-        for algorithm, history in self.results.items():
-            plt.plot(history["accuracy"], label=f"{algorithm} Training accuracy")
-            plt.plot(history["val_accuracy"], label=f"{algorithm} Validation accuracy")
-        
+        for algorithm, histories in self.results.items():
+            for i, result in enumerate(histories):
+                if i == 0:
+                    plt.plot(result["history"]["accuracy"], label=f"{algorithm} Training accuracy")
+                    plt.plot(result["history"]["val_accuracy"], label=f"{algorithm} Validation accuracy")
         plt.xlabel("Epochs")
         plt.ylabel("Accuracy")
         plt.legend()
         plt.title("Accuracy vs. Epochs")
+        plt.show()
+
+    def plot_loss_trials(self):
+        plt.figure(figsize=(10, 5))
+        for algorithm, histories in self.results.items():
+            training_losses = [result["history"]["loss"][-1] for result in histories]
+            validation_losses = [result["history"]["val_loss"][-1] for result in histories]
+            test_losses = [result["test_loss"] for result in histories]
+            plt.plot(training_losses, label=f"{algorithm} Training loss")
+            plt.plot(validation_losses, label=f"{algorithm} Validation loss")
+            plt.plot(test_losses, label=f"{algorithm} Test loss")
+        plt.xlabel("Trials")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.title("Loss vs. Trials")
+        plt.show()
+
+    def plot_accuracy_trials(self):
+        plt.figure(figsize=(10, 5))
+        for algorithm, histories in self.results.items():
+            training_accuracies = [result["history"]["accuracy"][-1] for result in histories]
+            validation_accuracies = [result["history"]["val_accuracy"][-1] for result in histories]
+            test_accuracies = [result["test_accuracy"] for result in histories]
+            plt.plot(training_accuracies, label=f"{algorithm} Training accuracy")
+            plt.plot(validation_accuracies, label=f"{algorithm} Validation accuracy")
+            plt.plot(test_accuracies, label=f"{algorithm} Test accuracy")
+        plt.xlabel("Trials")
+        plt.ylabel("Accuracy")
+        plt.legend()
+        plt.title("Accuracy vs. Trials")
         plt.show()
