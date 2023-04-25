@@ -53,14 +53,14 @@ class MyHyperModel(HyperModel):
         if hp_optimizer == "adam":
             optimizer = keras.optimizers.Adam(
                 learning_rate=hp_learning_rate,
-                beta_1=hp.Float("beta1", min_value=0.5, max_value=0.999, step=0.1),
-                beta_2=hp.Float("beta2", min_value=0.5, max_value=0.999, step=0.1),
+                beta_1=hp.Choice("beta1", values=[0.5, 0.75, 0.999]),
+                beta_2=hp.Choice("beta2", values=[0.5, 0.75, 0.999]),
                 epsilon=1e-7,
             )
         else:
             optimizer = keras.optimizers.SGD(
                 learning_rate=hp_learning_rate,
-                momentum=hp.Float("momentum", min_value=0, max_value=0.99, step=0.1),
+                momentum=hp.Choice("momentum", values=[0, 0.5, 0.99]),
                 nesterov=True,
             )
         model.compile(
@@ -110,7 +110,9 @@ class NelderMeadHyperModel:
 class TunerWrapper:
     def __init__(self, x_train, y_train, x_test, y_test):
         self.x_train = x_train
+        self.x_train_hp = x_train[:5000]
         self.y_train = y_train
+        self.y_train_hp = y_train[:5000]
         self.x_test = x_test
         self.y_test = y_test
 
@@ -144,8 +146,8 @@ class TunerWrapper:
     def _run_keras_tuner(self, tuner):
         tuner.search_space_summary()
         tuner.search(
-            self.x_train,
-            self.y_train,
+            self.x_train_hp, # fitting 5000 images
+            self.y_train_hp, # fitting 5000 images
             epochs=5,
             validation_split=0.1,
             verbose=2,
@@ -175,8 +177,8 @@ class TunerWrapper:
         def objective_function(params):
             model = hypermodel.build(params)
             history = model.fit(
-                self.x_train,
-                self.y_train,
+                self.x_train_hp, # fitting 5000 images
+                self.y_train_hp, # fitting 5000 images
                 batch_size=int(params[2]),
                 epochs=5,
                 validation_split=0.1,
