@@ -116,9 +116,9 @@ class NelderMeadHyperModel:
 class TunerWrapper:
     def __init__(self, x_train, y_train, x_test, y_test):
         self.x_train = x_train
-        self.x_train_hp = x_train[:5000]
+        self.x_train_hp = x_train[:20000] # number of images used for hyperparameter tuning
         self.y_train = y_train
-        self.y_train_hp = y_train[:5000]
+        self.y_train_hp = y_train[:20000] # number of images used for hyperparameter tuning
         self.x_test = x_test
         self.y_test = y_test
 
