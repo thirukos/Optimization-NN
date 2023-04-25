@@ -60,7 +60,7 @@ class MyHyperModel(HyperModel):
         else:
             optimizer = keras.optimizers.SGD(
                 learning_rate=hp_learning_rate,
-                momentum=hp.Choice("momentum", values=[0, 0.5, 0.99]),
+                momentum=hp.Choice("momentum", values=[0.0, 0.5, 0.99]),
                 nesterov=True,
             )
         model.compile(
@@ -80,7 +80,7 @@ class NelderMeadHyperModel:
         learning_rate, optimizer, dropout_rate, batch_size, beta1, beta2, momentum = params
         batch_size = int(batch_size)
 
-        if optimizer < 0.5:
+        if optimizer == 0:
             optimizer = keras.optimizers.Adam(
                 learning_rate=learning_rate,
                 beta_1=beta1,
@@ -182,11 +182,12 @@ class TunerWrapper:
         val_accuracies = []
         test_losses = []
         test_accuracies = []
-        for trial in tuner.oracle.get_best_trials(num_trials=30):
-            train_losses.append(trial.metrics.get_best_value("loss"))
-            train_accuracies.append(trial.metrics.get_best_value("accuracy"))
-            val_losses.append(trial.metrics.get_best_value("val_loss"))
-            val_accuracies.append(trial.metrics.get_best_value("val_accuracy"))
+        for trial in tuner.oracle.get_best_trials(num_trials=50):
+            if "loss" in trial.metrics.metrics:
+                train_losses.append(trial.metrics.get_best_value("loss"))
+                train_accuracies.append(trial.metrics.get_best_value("accuracy"))
+                val_losses.append(trial.metrics.get_best_value("val_loss"))
+                val_accuracies.append(trial.metrics.get_best_value("val_accuracy"))
 
             # Rebuild and evaluate the model for the test set
             trial_model = tuner.hypermodel.build(trial.hyperparameters)
@@ -204,6 +205,10 @@ class TunerWrapper:
         test_losses = []
         test_accuracies = []
         def objective_function(params):
+            # check if the parameter is withini the bound
+            for i, bound in enumerate(bounds):
+                if not (bound[0] <= params[i] <= bound[1]):
+                    return 1e10
             model = hypermodel.build(params)
             history = model.fit(
                 self.x_train_hp, # fitting 5000 images
@@ -226,20 +231,18 @@ class TunerWrapper:
             test_accuracies.append(test_accuracy)
             return val_loss
 
-        # x0 = np.array([0.1, 1e-3, 32])
-        x0 = np.array([1e-3, 0.5, 0.1, 32, 0.9, 0.999, 0.9])
+        x0 = np.array([1e-3, 0, 0.1, 32, 0.9, 0.999, 0.9])
         bounds = [
-                (1e-4, 1e-1),  # learning_rate
-                (0, 1),  # optimizer (continuous)
-                (0.1, 0.5),  # dropout_rate
-                (0, 1),  # batch_size (continuous)
-                (0.5, 0.999),  # beta1
-                (0.5, 0.999),  # beta2
-                (0, 0.99),  # momentum
-            ]
+            (1e-4, 1e-1),  # learning_rate
+            (0, 1),  # optimizer
+            (0.1, 0.5),  # dropout_rate
+            (16, 128),  # batch_size
+            (0.7, 0.999),  # beta1
+            (0.7, 0.999),  # beta2
+            (0, 0.9),  # momentum
+        ]
 
-        # result = minimize(objective_function, x0, method="Nelder-Mead", options={"maxiter": 50})
-        result = minimize(objective_function, x0, method="L-BFGS-B", bounds=bounds, options={"maxiter": 50})
+        result = minimize(objective_function, x0, method="Nelder-Mead", bounds=bounds, options={"maxiter": 50})
 
         best_params = result.x
         best_model = hypermodel.build(best_params)
